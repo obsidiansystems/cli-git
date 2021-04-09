@@ -1,5 +1,9 @@
 # Revision history for cli-git
 
+## 0.1.0.2
+
+* Update megaparsec version bounds
+
 ## 0.1.0.1
 
 * Add readme
