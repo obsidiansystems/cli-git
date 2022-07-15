@@ -1,17 +1,19 @@
-{ pkgs ? import <nixpkgs> {}  }:
+{ }:
 let
   nixpkgsSets = import ./.ci/nixpkgs.nix;
+  overlays = import ./overlays.nix;
   inherit (nixpkgsSets) nixos1809 nixos2003 unstable;
   inherit (nixos2003) lib;
-  inherit (nixos2003.haskell.lib) doJailbreak dontCheck;
+  inherit (nixos2003.haskell.lib) doJailbreak dontCheck overrideCabal;
   commonOverrides = self: super: {
-    which = pkgs.haskell.lib.overrideCabal (self.callHackageDirect {
+    which = self.callHackageDirect {
       pkg = "which";
       ver = "0.2";
       sha256 = "1g795yq36n7c6ycs7c0799c3cw78ad0cya6lj4x08m0xnfx98znn";
-    } {}) (drv: {
-      librarySystemDepends = (drv.librarySystemDepends or []) ++ [ pkgs.git ];
-    });
+    } {};
+    whichExecutables = p: with p; [
+     git
+    ];
     cli-extras = self.callHackageDirect {
       pkg = "cli-extras";
       ver = "0.1.0.1";
@@ -27,4 +29,4 @@ let
     };
   };
 in
-  lib.mapAttrs (_: ghc: ghc.callCabal2nix "cli-git" ./. {}) ghcs
+  lib.mapAttrs (_: overlays.cli-git nixos2003) ghcs
