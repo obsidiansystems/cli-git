@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Bindings.Cli.Git
   ( CommitId
   , gitProc
@@ -37,20 +38,24 @@ import System.Exit (ExitCode)
 import qualified Text.Megaparsec.Char.Lexer as ML
 import Text.Megaparsec as MP
 import Text.Megaparsec.Char as MP
+import System.Which (staticWhich)
 
 import Cli.Extras
 
+cp :: FilePath
+cp = $(staticWhich "cp")
+
+gitPath :: FilePath
+gitPath = $(staticWhich "git")
+
 -- Check whether the working directory is clean
-checkGitCleanStatus
+checkGitCleanStatus 
   :: ( MonadIO m
      , MonadLog Output m
      , MonadError e m
      , AsProcessFailure e
      , MonadFail m
-     )
-  => FilePath
-  -> Bool
-  -> m Bool
+     ) => FilePath -> Bool -> m Bool
 checkGitCleanStatus repo withIgnored = do
   let
     runGit = readProcessAndLogStderr Debug . gitProc repo
@@ -59,20 +64,16 @@ checkGitCleanStatus repo withIgnored = do
   T.null <$> liftA2 (<>) gitStatus gitDiff
 
 -- | Ensure that git repo is clean
-ensureCleanGitRepo
-  :: ( MonadIO m
+ensureCleanGitRepo :: 
+     ( MonadIO m
      , MonadLog Output m
      , MonadError e m
      , AsProcessFailure e
      , MonadFail m
+     , AsUnstructuredError e
      , HasCliConfig m
      , MonadMask m
-     , AsUnstructuredError e
-     )
-  => FilePath
-  -> Bool
-  -> Text
-  -> m ()
+     ) => FilePath -> Bool -> Text -> m ()
 ensureCleanGitRepo path withIgnored s =
   withSpinnerNoTrail ("Ensuring clean git repo at " <> T.pack path) $ do
     checkGitCleanStatus path withIgnored >>= \case
@@ -83,8 +84,21 @@ ensureCleanGitRepo path withIgnored s =
         failWith s
       True -> pure ()
 
+initGit :: 
+    ( MonadIO m
+     , MonadLog Output m
+     , MonadError e m
+     , AsProcessFailure e
+     , MonadFail m
+     ) => FilePath -> m ()
+initGit repo = do
+  let git = callProcessAndLogOutput (Debug, Debug) . gitProc repo
+  git ["init"]
+  git ["add", "."]
+  git ["commit", "-m", "Initial commit."]
+
 gitProcNoRepo :: [String] -> ProcessSpec
-gitProcNoRepo args = setEnvOverride (M.singleton "GIT_TERMINAL_PROMPT" "0" <>) $ proc "git" args
+gitProcNoRepo args = setEnvOverride (M.singleton "GIT_TERMINAL_PROMPT" "0" <>) $ proc gitPath args
 
 gitProc :: FilePath -> [String] -> ProcessSpec
 gitProc repo = gitProcNoRepo . runGitInDir
@@ -101,18 +115,68 @@ isolateGitProc = setEnvOverride (overrides <>)
       , ("GIT_CONFIG_NOSYSTEM", "1")
       , ("GIT_TERMINAL_PROMPT", "0") -- git 2.3+
       , ("GIT_ASKPASS", "echo") -- pre git 2.3 to just use empty password
-      , ("GIT_SSH_COMMAND", "ssh -o PreferredAuthentications password -o PubkeyAuthentication no -o GSSAPIAuthentication no")
+      , ("GIT_SSH_COMMAND", "ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o GSSAPIAuthentication=no")
       ]
 
-readGitProcess
+-- | Recursively copy a directory using `cp -a` -- TODO: Should use -rT instead of -a
+copyDir :: FilePath -> FilePath -> ProcessSpec
+copyDir src dest =
+  setCwd (Just src) $ proc cp ["-a", ".", dest] -- TODO: This will break if dest is relative since we change cwd
+
+readGitProcess 
   :: ( MonadIO m
      , MonadLog Output m
      , MonadError e m
      , AsProcessFailure e
      , MonadFail m
-     )
-  => FilePath -> [String] -> m Text
+     ) => FilePath -> [String] -> m Text
 readGitProcess repo = readProcessAndLogOutput (Debug, Notice) . gitProc repo
+
+readGitProcessNoRepo 
+  :: ( MonadIO m
+     , MonadLog Output m
+     , MonadError e m
+     , AsProcessFailure e
+     , MonadFail m
+     ) => [String] -> m Text
+readGitProcessNoRepo = readProcessAndLogOutput (Debug, Notice) . gitProcNoRepo
+
+processToShellString :: FilePath -> [String] -> String
+processToShellString cmd args = unwords $ map quoteAndEscape (cmd : args)
+  where quoteAndEscape x = T.unpack $ "'" <> T.replace "'" "'\''" (T.pack x) <> "'"
+
+-- | A simpler wrapper for CliApp's most used process function with sensible defaults.
+runProc 
+  :: ( MonadIO m
+     , MonadLog Output m
+     , MonadError e m
+     , AsProcessFailure e
+     , MonadFail m
+     ) => ProcessSpec -> m ()
+runProc = callProcessAndLogOutput (Notice, Error)
+
+-- | Like runProc, but all output goes to Debug logging level
+runProcSilently 
+  :: ( MonadIO m
+     , MonadLog Output m
+     , MonadError e m
+     , AsProcessFailure e
+     , MonadFail m
+     ) => ProcessSpec -> m ()
+runProcSilently = callProcessAndLogOutput (Debug, Debug)
+
+-- | A simpler wrapper for CliApp's readProcessAndLogStderr with sensible defaults.
+readProc 
+  :: ( MonadIO m
+     , MonadLog Output m
+     , MonadError e m
+     , AsProcessFailure e
+     , MonadFail m
+     ) => ProcessSpec -> m Text
+readProc = readProcessAndLogOutput (Debug, Error)
+
+tshow :: Show a => a -> Text
+tshow = T.pack . show
 
 gitLookupDefaultBranch :: GitLsRemoteMaps -> Either Text Text
 gitLookupDefaultBranch (refs, _) = do

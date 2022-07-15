@@ -1,15 +1,17 @@
-{ }:
+{ pkgs ? import <nixpkgs> {}  }:
 let
   nixpkgsSets = import ./.ci/nixpkgs.nix;
   inherit (nixpkgsSets) nixos1809 nixos2003 unstable;
   inherit (nixos2003) lib;
   inherit (nixos2003.haskell.lib) doJailbreak dontCheck;
   commonOverrides = self: super: {
-    which = self.callHackageDirect {
+    which = pkgs.haskell.lib.overrideCabal (self.callHackageDirect {
       pkg = "which";
       ver = "0.2";
       sha256 = "1g795yq36n7c6ycs7c0799c3cw78ad0cya6lj4x08m0xnfx98znn";
-    } {};
+    } {}) (drv: {
+      librarySystemDepends = (drv.librarySystemDepends or []) ++ [ pkgs.git ];
+    });
     cli-extras = self.callHackageDirect {
       pkg = "cli-extras";
       ver = "0.1.0.1";
