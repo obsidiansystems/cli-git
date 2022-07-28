@@ -49,13 +49,14 @@ gitPath :: FilePath
 gitPath = $(staticWhich "git")
 
 -- Check whether the working directory is clean
-checkGitCleanStatus 
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     ) => FilePath -> Bool -> m Bool
+checkGitCleanStatus ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , MonadMask m
+  ) => FilePath -> Bool -> m Bool
 checkGitCleanStatus repo withIgnored = do
   let
     runGit = readProcessAndLogStderr Debug . gitProc repo
@@ -64,16 +65,16 @@ checkGitCleanStatus repo withIgnored = do
   T.null <$> liftA2 (<>) gitStatus gitDiff
 
 -- | Ensure that git repo is clean
-ensureCleanGitRepo :: 
-     ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     , AsUnstructuredError e
-     , HasCliConfig m
-     , MonadMask m
-     ) => FilePath -> Bool -> Text -> m ()
+ensureCleanGitRepo ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , AsUnstructuredError e
+  , HasCliConfig e m
+  , MonadMask m
+  ) => FilePath -> Bool -> Text -> m ()
 ensureCleanGitRepo path withIgnored s =
   withSpinnerNoTrail ("Ensuring clean git repo at " <> T.pack path) $ do
     checkGitCleanStatus path withIgnored >>= \case
@@ -84,13 +85,14 @@ ensureCleanGitRepo path withIgnored s =
         failWith s
       True -> pure ()
 
-initGit :: 
-    ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     ) => FilePath -> m ()
+initGit ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , MonadMask m
+  ) => FilePath -> m ()
 initGit repo = do
   let git = callProcessAndLogOutput (Debug, Debug) . gitProc repo
   git ["init"]
@@ -123,57 +125,29 @@ copyDir :: FilePath -> FilePath -> ProcessSpec
 copyDir src dest =
   setCwd (Just src) $ proc cp ["-a", ".", dest] -- TODO: This will break if dest is relative since we change cwd
 
-readGitProcess 
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     ) => FilePath -> [String] -> m Text
+readGitProcess ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , MonadMask m
+  ) => FilePath -> [String] -> m Text
 readGitProcess repo = readProcessAndLogOutput (Debug, Notice) . gitProc repo
 
-readGitProcessNoRepo 
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     ) => [String] -> m Text
+readGitProcessNoRepo ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , MonadMask m
+  ) => [String] -> m Text
 readGitProcessNoRepo = readProcessAndLogOutput (Debug, Notice) . gitProcNoRepo
 
 processToShellString :: FilePath -> [String] -> String
 processToShellString cmd args = unwords $ map quoteAndEscape (cmd : args)
   where quoteAndEscape x = T.unpack $ "'" <> T.replace "'" "'\''" (T.pack x) <> "'"
-
--- | A simpler wrapper for CliApp's most used process function with sensible defaults.
-runProc 
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     ) => ProcessSpec -> m ()
-runProc = callProcessAndLogOutput (Notice, Error)
-
--- | Like runProc, but all output goes to Debug logging level
-runProcSilently 
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     ) => ProcessSpec -> m ()
-runProcSilently = callProcessAndLogOutput (Debug, Debug)
-
--- | A simpler wrapper for CliApp's readProcessAndLogStderr with sensible defaults.
-readProc 
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     ) => ProcessSpec -> m Text
-readProc = readProcessAndLogOutput (Debug, Error)
 
 tshow :: Show a => a -> Text
 tshow = T.pack . show
