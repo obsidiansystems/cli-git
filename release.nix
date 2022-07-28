@@ -14,11 +14,7 @@ let
     whichExecutables = p: with p; [
      git
     ];
-    cli-extras = self.callHackageDirect {
-      pkg = "cli-extras";
-      ver = "0.1.0.1";
-      sha256 = "1hnmk8jm9zrhcv8vz9raj0p26svc0rd47zc7nz58sja6jsakcaq2";
-    } {};
+    cli-extras = self.callCabal2nix "cli-extras" (import ./dep/cli-extras/thunk.nix) {};
   };
   ghcs = rec {
     ghc865 = nixos2003.haskell.packages.ghc865.override {
