@@ -145,13 +145,6 @@ readGitProcessNoRepo ::
   ) => [String] -> m Text
 readGitProcessNoRepo = readProcessAndLogOutput (Debug, Notice) . gitProcNoRepo
 
-processToShellString :: FilePath -> [String] -> String
-processToShellString cmd args = unwords $ map quoteAndEscape (cmd : args)
-  where quoteAndEscape x = T.unpack $ "'" <> T.replace "'" "'\''" (T.pack x) <> "'"
-
-tshow :: Show a => a -> Text
-tshow = T.pack . show
-
 gitLookupDefaultBranch :: GitLsRemoteMaps -> Either Text Text
 gitLookupDefaultBranch (refs, _) = do
   ref <- case M.lookup GitRef_Head refs of
