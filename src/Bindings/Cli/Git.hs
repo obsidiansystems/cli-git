@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Bindings.Cli.Git
   ( CommitId
   , gitProc
@@ -37,20 +38,28 @@ import System.Exit (ExitCode)
 import qualified Text.Megaparsec.Char.Lexer as ML
 import Text.Megaparsec as MP
 import Text.Megaparsec.Char as MP
+import System.Which (staticWhich)
 
 import Cli.Extras
 
--- Check whether the working directory is clean
-checkGitCleanStatus
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     )
-  => FilePath
-  -> Bool
-  -> m Bool
+cp :: FilePath
+cp = $(staticWhich "cp")
+
+gitPath :: FilePath
+gitPath = $(staticWhich "git")
+
+-- | Checks whether the given directory is a clean git repository.
+checkGitCleanStatus ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , MonadMask m
+  )
+  => FilePath  -- ^ The repository
+  -> Bool      -- ^ Should ignored files be considered?
+  -> m Bool    -- ^ True if the repository is clean.
 checkGitCleanStatus repo withIgnored = do
   let
     runGit = readProcessAndLogStderr Debug . gitProc repo
@@ -58,20 +67,21 @@ checkGitCleanStatus repo withIgnored = do
     gitDiff = runGit ["diff"]
   T.null <$> liftA2 (<>) gitStatus gitDiff
 
--- | Ensure that git repo is clean
-ensureCleanGitRepo
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     , HasCliConfig m
-     , MonadMask m
-     , AsUnstructuredError e
-     )
-  => FilePath
-  -> Bool
-  -> Text
+-- | Ensure that the given directory is a clean git repository. If the
+-- repository has changes, throw an error.
+ensureCleanGitRepo ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , AsUnstructuredError e
+  , HasCliConfig e m
+  , MonadMask m
+  )
+  => FilePath -- ^ The repository
+  -> Bool     -- ^ Should ignored files be considered?
+  -> Text     -- ^ The error message which should be thrown when the repository is unclean.
   -> m ()
 ensureCleanGitRepo path withIgnored s =
   withSpinnerNoTrail ("Ensuring clean git repo at " <> T.pack path) $ do
@@ -83,9 +93,32 @@ ensureCleanGitRepo path withIgnored s =
         failWith s
       True -> pure ()
 
-gitProcNoRepo :: [String] -> ProcessSpec
-gitProcNoRepo args = setEnvOverride (M.singleton "GIT_TERMINAL_PROMPT" "0" <>) $ proc "git" args
+-- | Initialize a Git repository and make a root commit at the given
+-- path. The path must point to an existing directory without a @.git@
+-- folder.
+initGitRepo ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , MonadMask m
+  )
+  => FilePath  -- ^ Where should we initialize the repository?
+  -> m ()
+initGitRepo repo = do
+  let git = callProcessAndLogOutput (Debug, Debug) . gitProc repo
+  git ["init"]
+  git ["add", "."]
+  git ["commit", "-m", "Initial commit."]
 
+-- | Create a 'ProcessSpec' for invoking @git@ without a specified
+-- repository, using the given arguments.
+gitProcNoRepo :: [String] -> ProcessSpec
+gitProcNoRepo args = setEnvOverride (M.singleton "GIT_TERMINAL_PROMPT" "0" <>) $ proc gitPath args
+
+-- | Create a 'ProcessSpec' for invoking @git@ in a specified repository
+-- path, using the given arguments.
 gitProc :: FilePath -> [String] -> ProcessSpec
 gitProc repo = gitProcNoRepo . runGitInDir
   where
@@ -93,6 +126,14 @@ gitProc repo = gitProcNoRepo . runGitInDir
       args@("clone":_) -> args <> [repo]
       args -> ["-C", repo] <> args
 
+-- | Modify the 'ProcessSpec' to apply environment flags which ensure
+-- @git@ has no dependency on external information. Specifically:
+--
+--  * The @HOME@ directory is unset
+--  * @GIT_CONFIG_NOSYSTEM@ is set to 1
+--  * @GIT_TERMINAL_PROMPT@ is set to 0 and @GIT_ASKPASS@ is set to
+--  @echo@, so that password prompts will not pop up
+--  * The SSH command used is @ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o GSSAPIAuthentication=no@
 isolateGitProc :: ProcessSpec -> ProcessSpec
 isolateGitProc = setEnvOverride (overrides <>)
   where
@@ -101,18 +142,39 @@ isolateGitProc = setEnvOverride (overrides <>)
       , ("GIT_CONFIG_NOSYSTEM", "1")
       , ("GIT_TERMINAL_PROMPT", "0") -- git 2.3+
       , ("GIT_ASKPASS", "echo") -- pre git 2.3 to just use empty password
-      , ("GIT_SSH_COMMAND", "ssh -o PreferredAuthentications password -o PubkeyAuthentication no -o GSSAPIAuthentication no")
+      , ("GIT_SSH_COMMAND", "ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o GSSAPIAuthentication=no")
       ]
 
-readGitProcess
-  :: ( MonadIO m
-     , MonadLog Output m
-     , MonadError e m
-     , AsProcessFailure e
-     , MonadFail m
-     )
-  => FilePath -> [String] -> m Text
+-- | Recursively copy a directory using `cp -a` -- TODO: Should use -rT instead of -a
+copyDir :: FilePath -> FilePath -> ProcessSpec
+copyDir src dest =
+  setCwd (Just src) $ proc cp ["-a", ".", dest] -- TODO: This will break if dest is relative since we change cwd
+
+-- | Call @git@ in the specified directory with the given arguments and
+-- return its standard output stream. Error messages from @git@, if any,
+-- are printed with 'Notice' verbosity.
+readGitProcess ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , MonadMask m
+  ) => FilePath -> [String] -> m Text
 readGitProcess repo = readProcessAndLogOutput (Debug, Notice) . gitProc repo
+
+-- | Call @git@ with the given arguments and return its standard output
+-- stream. Error messages from @git@, if any, are printed with 'Notice'
+-- verbosity.
+readGitProcessNoRepo ::
+  ( MonadIO m
+  , MonadLog Output m
+  , MonadError e m
+  , AsProcessFailure e
+  , MonadFail m
+  , MonadMask m
+  ) => [String] -> m Text
+readGitProcessNoRepo = readProcessAndLogOutput (Debug, Notice) . gitProcNoRepo
 
 gitLookupDefaultBranch :: GitLsRemoteMaps -> Either Text Text
 gitLookupDefaultBranch (refs, _) = do
