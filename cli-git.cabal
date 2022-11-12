@@ -12,14 +12,14 @@ build-type:         Simple
 extra-source-files: CHANGELOG.md
                     README.md
 
-tested-with: GHC ==8.6.5 || ==8.8.4
+tested-with: GHC ==8.6.5 || ==8.8.4 || ==9.2.4
 
 library
   exposed-modules:  Bindings.Cli.Git
   hs-source-dirs:   src
   default-language: Haskell2010
   build-depends:
-      base            >=4.12.0.0 && <4.15
+      base            >=4.12.0.0 && <4.17
     , cli-extras      >=0.2.1.0  && <0.3
     , containers      >=0.6.0.1  && <0.7
     , data-default    >=0.7.1.1  && <0.8
