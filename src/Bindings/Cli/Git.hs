@@ -21,12 +21,14 @@ module Bindings.Cli.Git
 import Control.Applicative hiding (many)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except
+import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Fail
 import Control.Monad.Log
 import Data.Bool (bool)
 import Data.Bifunctor
 import Data.Char
 import Data.Either
+import Data.Functor (void)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (maybeToList)
