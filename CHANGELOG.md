@@ -1,5 +1,9 @@
 # Revision history for cli-git
 
+## 0.2.0.1
+
+* Build with GHC 9.6
+
 ## 0.2.0.0
 
 * [#2](https://github.com/obsidiansystems/cli-git/pull/2) `ensureCleanGitRepo` and `checkGitCleanStatus` now have `MonadMask` constraints
