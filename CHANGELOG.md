@@ -1,5 +1,9 @@
 # Revision history for cli-git
 
+## 0.2.0.1 -- Revision 1
+
+* Build with GHC 9.10
+
 ## 0.2.0.1
 
 * Build with GHC 9.6
